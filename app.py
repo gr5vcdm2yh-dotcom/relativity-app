@@ -3,7 +3,7 @@ import folium
 from streamlit_folium import st_folium
 from geopy.distance import distance
 
-st.set_page_config(page_title="スマホの裏の「相対論」体験", layout="wide")
+st.set_page_config(page_title="相対論誤差シュミレーター", layout="wide")
 
 BASE_LAT = 35.718815
 BASE_LON = 139.708732
