@@ -5,34 +5,30 @@ from geopy.distance import distance
 import time
 
 # ==========================================
-# 設定とセッション状態の初期化
+# 設定とセッション状態
 # ==========================================
-st.set_page_config(page_title="相対論GPSシミュレーター", layout="wide")
+st.set_page_config(page_title="GPS相対論シミュレーター", layout="wide")
 
-# 状態保持
 if 'elapsed_days' not in st.session_state:
-    st.session_state.elapsed_days = 0.0 # シミュレーション上の累積経過日
+    st.session_state.elapsed_days = 0.0
 if 'last_run_time' not in st.session_state:
-    st.session_state.last_run_time = time.time() # 前回の更新時刻
+    st.session_state.last_run_time = time.time()
 
-# 物理定数
-BASE_LAT = 35.718815
-BASE_LON = 139.708732
+# 定数
+BASE_LAT, BASE_LON = 35.718815, 139.708732
 DRIFT_PER_DAY = 11.4 
 
 # ==========================================
-# サイドバー：時間制御
+# UI部
 # ==========================================
-st.sidebar.title("🚀 シミュレーション制御")
+st.sidebar.title("🚀 制御パネル")
 
-# スライダー：1秒（最小）〜 60秒（最大：1分）
-# 単位は「1秒あたりのシミュレーション進行秒数」
-time_multiplier = st.sidebar.slider(
-    "時間加速倍率 (1秒につき何秒進めるか)", 
-    min_value=1, 
-    max_value=60, 
-    value=10,
-    help="1に設定すると現実と同じ速さ、60に設定すると1秒で1分分の時間が経過します。"
+# 加速倍率（負荷軽減のため、少し控えめの範囲を推奨）
+time_multiplier = st.sidebar.select_slider(
+    "時間加速倍率", 
+    options=[1, 10, 30, 60, 300, 600], 
+    value=60,
+    help="倍率が高いほど、赤い点が早く動きます。"
 )
 
 auto_mode = st.sidebar.checkbox("シミュレーション開始", value=False)
@@ -42,71 +38,74 @@ if st.sidebar.button("📍 補正を実行（リセット）"):
     st.session_state.last_run_time = time.time()
     st.rerun()
 
-st.sidebar.markdown("---")
-st.sidebar.write("### 現在の状態")
-# 秒単位での表示
-total_sim_seconds = st.session_state.elapsed_days * 86400
-st.sidebar.write(f"累積経過時間: {total_sim_seconds:.1f} 秒")
-
 # ==========================================
-# 物理ロジック（時間更新）
+# 軽量ロジック
 # ==========================================
 current_real_time = time.time()
-# 前回の更新からの経過実時間を計算（IT的工夫）
 delta_real_time = current_real_time - st.session_state.last_run_time
 st.session_state.last_run_time = current_real_time
 
 if auto_mode:
-    # シミュレーション上の経過秒数 = 実経過秒数 × 倍率
-    delta_sim_seconds = delta_real_time * time_multiplier
-    # 日単位に変換して累積
-    st.session_state.elapsed_days += delta_sim_seconds / 86400
+    # 経過時間を計算
+    st.session_state.elapsed_days += (delta_real_time * time_multiplier) / 86400
 
-# ズレの計算
 total_drift_km = DRIFT_PER_DAY * st.session_state.elapsed_days
 end_point = distance(kilometers=total_drift_km).destination((BASE_LAT, BASE_LON), bearing=135)
 
+# 地図用データ（軽量なリスト形式で作成）
+points_data = [
+    {"lat": BASE_LAT, "lon": BASE_LON, "color": [0, 120, 255], "label": "正解"},
+    {"lat": end_point.latitude, "lon": end_point.longitude, "color": [255, 50, 50], "label": "誤差"}
+]
+df_points = pd.DataFrame(points_data)
+
 # ==========================================
-# メイン画面表示
+# メイン表示
 # ==========================================
-st.title("🌍 リアルタイム相対論誤差シミュレーター")
+st.title("🌍 GPS相対論誤差シミュレーター")
 
 col1, col2 = st.columns([3, 1])
 
 with col1:
-    # 地図の描画
-    view_state = pdk.ViewState(latitude=BASE_LAT, longitude=BASE_LON, zoom=12)
-    
-    df_points = pd.DataFrame([
-        {"lat": BASE_LAT, "lon": BASE_LON, "color": [0, 0, 255, 200]},
-        {"lat": end_point.latitude, "lon": end_point.longitude, "color": [255, 0, 0, 200]}
-    ])
+    # 視認性の高いレイヤー設定
+    layer = pdk.Layer(
+        "ScatterplotLayer",
+        df_points,
+        get_position="[lon, lat]",
+        get_fill_color="color",
+        get_line_color=[255, 255, 255], # 白い縁取りで視認性アップ
+        line_width_min_pixels=2,
+        stroked=True,
+        get_radius=15, # 半径を小さく設定
+        radius_min_pixels=6, # ズームアウトしても小さくなりすぎない
+        radius_max_pixels=15,
+    )
 
+    line_layer = pdk.Layer(
+        "LineLayer",
+        pd.DataFrame([{"start": [BASE_LON, BASE_LAT], "end": [end_point.longitude, end_point.latitude]}]),
+        get_source_position="start",
+        get_target_position="end",
+        get_color=[255, 50, 50, 150],
+        get_width=2,
+    )
+
+    # 地図描画（スタイルをNoneにしてロードを最速化）
     st.pydeck_chart(pdk.Deck(
-        map_style=None,
-        initial_view_state=view_state,
-        layers=[
-            pdk.Layer("ScatterplotLayer", df_points, get_position="[lon, lat]", get_color="color", get_radius=300),
-            pdk.Layer(
-                "LineLayer",
-                pd.DataFrame([{"start": [BASE_LON, BASE_LAT], "end": [end_point.longitude, end_point.latitude]}]),
-                get_source_position="start", get_target_position="end", get_color=[255, 0, 0, 150], get_width=3
-            )
-        ]
+        map_style=None, 
+        initial_view_state=pdk.ViewState(latitude=BASE_LAT, longitude=BASE_LON, zoom=12),
+        layers=[line_layer, layer]
     ))
 
 with col2:
-    # 物理学的な「ズレ」のリアルタイム表示
-    st.metric("位置誤差 (m)", f"{total_drift_km * 1000:.2f} m")
-    st.write(f"**加速倍率:** {time_multiplier}倍速")
-    
-    if total_drift_km > 0:
-        # 秒速換算の解説（物理学科らしい補足）
-        drift_speed_ms = (DRIFT_PER_DAY * 1000 / 86400) * time_multiplier
-        st.write(f"現在のズレる速さ: 約 {drift_speed_ms:.4f} m/s")
-        st.info("相対論補正を行わない場合、この速度で現在地が『逃げて』いきます。")
+    st.metric("位置誤差", f"{total_drift_km * 1000:.1f} m")
+    st.write(f"加速: {time_multiplier}倍")
+    st.caption("※スマホでの動作を優先し、更新間隔を調整しています。")
 
-# 再描画のループ（自動モード時）
+# ==========================================
+# スマホ・軽量化のためのインターバル
+# ==========================================
 if auto_mode:
-    time.sleep(0.05) # 描画負荷を抑えつつ滑らかさを維持
+    # 0.5秒待機。これにより通信回数が減り、スマホでも安定します。
+    time.sleep(0.5)
     st.rerun()
